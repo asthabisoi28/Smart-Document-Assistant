@@ -134,14 +134,16 @@ def run_tests():
         q_unanswerable = "What is the secret recipe for baking chocolate brownies in Paris?"
         resp_unanswerable = rag.answer_question(q_unanswerable, top_k=3)
         assert resp_unanswerable.is_answerable is False, "Expected is_answerable=False for out-of-domain query"
+        assert resp_unanswerable.confidence_score == 0.0, "Expected confidence_score=0.0 for unanswerable query"
         assert "couldn't find information" in resp_unanswerable.answer.lower() or "not found" in resp_unanswerable.answer.lower() or "cannot answer" in resp_unanswerable.answer.lower()
-        print(f"[OK] Anti-Hallucination Guardrail verified: Correctly rejected unanswerable query with response: '{resp_unanswerable.answer}'")
+        print(f"[OK] Anti-Hallucination Guardrail verified: Correctly rejected unanswerable query with response: '{resp_unanswerable.answer}' (confidence: {resp_unanswerable.confidence_score})")
 
         # Test Chat History & Session ID
         session_id = "test-session-123"
         resp_session = rag.answer_question(q1, top_k=3, session_id=session_id)
         assert resp_session.conversation_history is not None
-        print(f"[OK] Session-based Conversation Memory verified: history length = {len(resp_session.conversation_history)}")
+        assert 0.0 < resp_session.confidence_score <= 1.0, f"Expected 0 < confidence_score <= 1.0, got {resp_session.confidence_score}"
+        print(f"[OK] Session-based Conversation Memory verified: history length = {len(resp_session.conversation_history)}, confidence: {resp_session.confidence_score}")
 
         # Test Summarize Document
         sum_resp = rag.summarize_document("doc1", session_id=session_id)
@@ -183,6 +185,9 @@ def run_tests():
     print("==================================================")
     print("ALL VERIFICATION SUITE TESTS PASSED SUCCESSFULLY!")
     print("==================================================")
+
+def test_backend_verification():
+    run_tests()
 
 if __name__ == "__main__":
     run_tests()

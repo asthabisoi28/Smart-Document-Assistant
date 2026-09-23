@@ -5,7 +5,19 @@ export default function ChatHistory({ history }) {
   const [isOpen, setIsOpen] = useState(true);
 
   if (!history || history.length === 0) {
-    return null;
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+            <History className="w-4 h-4 text-brand-600" />
+            Chat History & Context (0)
+          </h3>
+        </div>
+        <p className="text-[11px] text-slate-400 italic">
+          No conversation turns in this session yet. Ask a question to build session context.
+        </p>
+      </div>
+    );
   }
 
   return (

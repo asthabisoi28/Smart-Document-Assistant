@@ -15,7 +15,7 @@ export default function AnswerDisplay({ queryResult, isLoading }) {
         <div>
           <h3 className="text-base font-semibold text-slate-800">Generating Grounded Answer...</h3>
           <p className="text-xs text-slate-500 mt-1">
-            Retrieving nearest embeddings from FAISS & querying Gemini 3.5 Flash
+            Retrieving nearest embeddings from FAISS & querying Gemini 3.5 Flash-Lite
           </p>
         </div>
       </div>
@@ -32,7 +32,8 @@ export default function AnswerDisplay({ queryResult, isLoading }) {
     is_answerable,
     api_key_configured = true,
     error_message,
-    sources
+    sources,
+    confidence_score = 0.0
   } = queryResult;
 
   const handleCopy = () => {
@@ -89,7 +90,7 @@ export default function AnswerDisplay({ queryResult, isLoading }) {
           </h3>
           {is_answerable && answer && (
             <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-              Synthesized by Gemini 3.5 Flash
+              Synthesized by Gemini 3.5 Flash-Lite
             </span>
           )}
         </div>
@@ -126,10 +127,14 @@ export default function AnswerDisplay({ queryResult, isLoading }) {
           </div>
         ) : !is_answerable ? (
           /* Case C: Information not present (Unsupported query / Anti-hallucination) */
-          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-xs space-y-1.5">
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-xs space-y-2.5">
             <div className="flex items-center gap-2 font-semibold text-slate-900">
               <Info className="w-4 h-4 text-slate-500 shrink-0" />
               Information Not Found in Uploaded Documents
+            </div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-semibold shadow-xs">
+              <span className="text-emerald-600 font-bold">✓</span>
+              <span>Confidence: {Math.round((confidence_score ?? 0) * 100)}%</span>
             </div>
             <p className="text-slate-700 leading-relaxed text-sm">
               {answer || `I couldn't find information about "${question}" in the uploaded documents.`}
@@ -140,7 +145,11 @@ export default function AnswerDisplay({ queryResult, isLoading }) {
           </div>
         ) : (
           /* Case D: Successful grounded context-aware answer */
-          <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200/80">
+          <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-3">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-semibold shadow-xs">
+              <span className="text-emerald-600 font-bold">✓</span>
+              <span>Confidence: {Math.round((confidence_score ?? 0) * 100)}%</span>
+            </div>
             <div className="prose prose-slate max-w-none text-sm leading-relaxed text-slate-800 whitespace-pre-wrap">
               {answer}
             </div>

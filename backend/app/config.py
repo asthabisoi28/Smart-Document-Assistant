@@ -38,7 +38,7 @@ def get_gemini_api_key() -> str:
 
 # Settings
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 
 # RAG & Retrieval Config
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "600"))  # characters

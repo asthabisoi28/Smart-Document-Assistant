@@ -57,6 +57,7 @@ class QueryResponse(BaseModel):
     api_key_configured: bool = True
     error_message: Optional[str] = None
     sources: List[EvidenceItem]
+    confidence_score: float = Field(0.0, description="Confidence value between 0 and 1 derived from retrieval similarity scores.")
     # Optional conversation snapshot (not exposed to client but useful internally)
     conversation_history: Optional[List[dict]] = None
 

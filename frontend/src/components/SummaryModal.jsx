@@ -49,7 +49,7 @@ export default function SummaryModal({ doc, summary, isLoading, error, onClose }
               <Loader2 className="w-8 h-8 mx-auto text-brand-600 animate-spin" />
               <p className="text-xs font-semibold text-slate-700">Generating Grounded Summary...</p>
               <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
-                Reading document chunks & requesting summary from Gemini 3.5 Flash
+                Reading document chunks & requesting summary from Gemini 3.5 Flash-Lite
               </p>
             </div>
           ) : error ? (

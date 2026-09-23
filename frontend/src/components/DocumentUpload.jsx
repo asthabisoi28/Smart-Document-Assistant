@@ -89,7 +89,7 @@ export default function DocumentUpload({ onUploadComplete }) {
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,.txt"
+          accept=".pdf,.txt,application/pdf,text/plain"
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
         />

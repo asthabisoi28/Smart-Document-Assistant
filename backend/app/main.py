@@ -31,7 +31,7 @@ from app.rag_service import RAGService
 
 app = FastAPI(
     title="Smart Document Assistant API",
-    description="RAG Document Assistant with FAISS, PyMuPDF, Sentence Transformers, and Gemini 3.5 Flash",
+    description="RAG Document Assistant with FAISS, PyMuPDF, Sentence Transformers, and Gemini 3.5 Flash-Lite",
     version="1.0.0"
 )
 

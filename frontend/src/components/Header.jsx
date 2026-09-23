@@ -4,7 +4,7 @@ import { BookOpen, Sparkles, Server, CheckCircle2, AlertCircle, KeyRound } from 
 export default function Header({ health, isOnline }) {
   const isKeyConfigured = health?.gemini_api_key_configured;
 
-  const rawModel = health?.gemini_model || "gemini-3.5-flash";
+  const rawModel = health?.gemini_model || "gemini-3.5-flash-lite";
   const formattedModel = rawModel
     .replace(/^gemini-/i, "Gemini ")
     .replace(/-/g, " ")

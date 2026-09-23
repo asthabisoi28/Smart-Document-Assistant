@@ -1,7 +1,8 @@
 import os
 import re
+import time
 import logging
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Any
 import numpy as np
 
 from app.models import (
@@ -53,10 +54,95 @@ def classify_gemini_error(e: Exception) -> Tuple[str, str]:
 
     return category, sanitized
 
+def calculate_confidence_score(
+    retrieved_items: Any,
+    unanswerable_threshold: float = UNANSWERABLE_THRESHOLD,
+    max_threshold: float = 0.80
+) -> float:
+    """
+    Computes a normalized confidence score in [0.0, 1.0] from FAISS retrieval scores.
+
+    FAISS metric:
+        Uses IndexFlatIP on L2-normalized embeddings, calculating cosine similarity
+        in [-1.0, 1.0], clamped to [0.0, 1.0] by VectorStore.
+
+    Formula:
+        1. If retrieved_items is empty or max similarity < unanswerable_threshold (0.28):
+           returns 0.0 (anti-hallucination / unanswerable).
+        2. Normalizes scores over the meaningful semantic range [unanswerable_threshold, max_threshold]:
+           norm(s) = clamp((s - unanswerable_threshold) / (max_threshold - unanswerable_threshold), 0.0, 1.0)
+        3. Aggregates evidence by weighting the strongest relevant result (80%) and the
+           average of supporting relevant results (20%):
+           If multiple relevant items:
+               confidence = 0.80 * norm(top_score) + 0.20 * norm(mean(supporting_scores))
+           If single relevant item:
+               confidence = norm(top_score)
+        4. Clamps the final score to [0.0, 1.0] and rounds to 4 decimal places.
+    """
+    if not retrieved_items:
+        return 0.0
+
+    scores = []
+    for item in retrieved_items:
+        if isinstance(item, (tuple, list)):
+            scores.append(float(item[1]))
+        elif hasattr(item, "similarity_score"):
+            scores.append(float(item.similarity_score))
+        else:
+            scores.append(float(item))
+
+    if not scores:
+        return 0.0
+
+    relevant_scores = [s for s in scores if s >= unanswerable_threshold]
+    if not relevant_scores:
+        return 0.0
+
+    relevant_scores.sort(reverse=True)
+    top_score = relevant_scores[0]
+
+    range_span = max_threshold - unanswerable_threshold
+    if range_span <= 0:
+        return 1.0
+
+    def _normalize(s: float) -> float:
+        return float(np.clip((s - unanswerable_threshold) / range_span, 0.0, 1.0))
+
+    norm_top = _normalize(top_score)
+
+    if len(relevant_scores) > 1:
+        supporting_scores = relevant_scores[1:]
+        norm_supporting = sum(_normalize(s) for s in supporting_scores) / len(supporting_scores)
+        confidence = 0.80 * norm_top + 0.20 * norm_supporting
+    else:
+        confidence = norm_top
+
+    return round(float(np.clip(confidence, 0.0, 1.0)), 4)
+
 class RAGService:
     def __init__(self, vector_store: VectorStore, embedding_service: EmbeddingService):
         self.vector_store = vector_store
         self.embedding_service = embedding_service
+
+    def _generate_query_variations(self, question: str) -> List[str]:
+        """
+        Generates semantic query variations to capture alternate phrasings
+        (e.g., 'tech stack', 'technologies', 'tools used', 'built using', 'architecture').
+        """
+        variations = [question]
+        q_lower = question.lower()
+
+        # Tech stack / Technology variations
+        if any(term in q_lower for term in ["tech stack", "tech stacks", "technology", "technologies", "tools", "built using", "framework", "architecture", "stack"]):
+            project_match = re.search(r'\b([A-Z][a-zA-Z0-9_-]+)\b', question)
+            proj_name = project_match.group(1) if project_match else ""
+
+            variations.append(f"{question} technologies tools tech stack architecture frameworks built using")
+            if proj_name and proj_name.lower() not in ["what", "which", "how", "the", "smart"]:
+                variations.append(f"{proj_name} project tech stack technologies tools architecture built using")
+
+        return list(dict.fromkeys(variations))
+
 
 
 
@@ -111,86 +197,99 @@ Please provide a well-structured, natural answer based ONLY on the excerpts abov
             "cannot answer this question based on"
         ]
 
-        try:
-            from google import genai
-            from google.genai import types
+        max_retries = 2
+        retry_delay = 1.0
 
-            client = genai.Client(api_key=api_key)
-            # Log the size of the context+prompt for diagnostics (character count)
-            logger.debug("Prompt length (characters): %d", len(prompt))
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.1,
-                    max_output_tokens=512,
+        for attempt in range(max_retries + 1):
+            try:
+                from google import genai
+                from google.genai import types
+
+                client = genai.Client(api_key=api_key)
+                # Log the size of the context+prompt for diagnostics (character count)
+                logger.debug("Prompt length (characters): %d (attempt %d/%d)", len(prompt), attempt + 1, max_retries + 1)
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.1,
+                        max_output_tokens=512,
+                    )
                 )
-            )
-            # Primary check: direct text field
-            if response and getattr(response, "text", None):
-                answer_text = response.text.strip()
-                is_ans = not any(ind in answer_text.lower() for ind in unsupported_indicators)
-                return answer_text, is_ans, None
+                # Primary check: direct text field
+                if response and getattr(response, "text", None):
+                    answer_text = response.text.strip()
+                    is_ans = not any(ind in answer_text.lower() for ind in unsupported_indicators)
+                    return answer_text, is_ans, None
 
-            # Fallback: inspect candidates for generated parts
-            if response and getattr(response, "candidates", None):
-                try:
-                    candidate = response.candidates[0]
-                    # Collect text from all parts if available
-                    parts_texts = []
-                    for part in getattr(candidate.content, "parts", []):
-                        if hasattr(part, "text"):
-                            parts_texts.append(part.text)
-                    answer_text = " ".join(parts_texts).strip()
-                    if answer_text:
-                        is_ans = not any(ind in answer_text.lower() for ind in unsupported_indicators)
-                        # Log finish reason for diagnostics (won't expose secrets)
-                        finish_reason = getattr(candidate, "finish_reason", "unknown")
-                        logger.debug("Gemini candidate finish_reason: %s", finish_reason)
-                        return answer_text, is_ans, None
-                except Exception as e_fallback:
-                    logger.debug("Error extracting text from Gemini candidates: %s", e_fallback)
+                # Fallback: inspect candidates for generated parts
+                if response and getattr(response, "candidates", None):
+                    try:
+                        candidate = response.candidates[0]
+                        # Collect text from all parts if available
+                        parts_texts = []
+                        for part in getattr(candidate.content, "parts", []):
+                            if hasattr(part, "text"):
+                                parts_texts.append(part.text)
+                        answer_text = " ".join(parts_texts).strip()
+                        if answer_text:
+                            is_ans = not any(ind in answer_text.lower() for ind in unsupported_indicators)
+                            # Log finish reason for diagnostics (won't expose secrets)
+                            finish_reason = getattr(candidate, "finish_reason", "unknown")
+                            logger.debug("Gemini candidate finish_reason: %s", finish_reason)
+                            return answer_text, is_ans, None
+                    except Exception as e_fallback:
+                        logger.debug("Error extracting text from Gemini candidates: %s", e_fallback)
 
-            # If no text could be extracted, return a clear error message
-            return "", False, "Gemini returned no generated text. Please check the prompt or try a different query."
-        except Exception as e:
-            category, safe_msg = classify_gemini_error(e)
-            # Full details stay in backend logs only
-            logger.warning(f"google.genai call to {model_name} failed [{category}]: {safe_msg}")
+                # If no text could be extracted, return a clear error message
+                return "", False, "Gemini returned no generated text. Please check the prompt or try a different query."
 
-            # Return clean, user-facing messages — never expose raw API internals
-            user_messages = {
-                "quota/rate limit": (
-                    "Gemini is temporarily unavailable because the API quota has been exceeded. "
-                    "Please try again later."
-                ),
-                "invalid API key": (
-                    "The configured Gemini API key is invalid. "
-                    "Please check the GEMINI_API_KEY in backend/.env."
-                ),
-                "service unavailable": (
-                    "Gemini is temporarily unavailable due to high demand. "
-                    "Please try again shortly."
-                ),
-                "model not available": (
-                    "The configured Gemini model is currently unavailable. "
-                    "Please contact the administrator."
-                ),
-                "request/content format error": (
-                    "There was an issue processing your request. "
-                    "Please try rephrasing your question."
-                ),
-                "incorrect Gemini SDK usage": (
-                    "An internal configuration error occurred. "
-                    "Please contact the administrator."
-                ),
-            }
-            user_msg = user_messages.get(
-                category,
-                "Unable to generate a response from Gemini. Please try again later."
-            )
-            return "", False, user_msg
+            except Exception as e:
+                category, safe_msg = classify_gemini_error(e)
+                # Full details stay in backend logs only
+                logger.warning(f"google.genai call to {model_name} failed [attempt {attempt + 1}/{max_retries + 1}] [{category}]: {safe_msg}")
+
+                # Retry up to 2 times only for temporary 503 service unavailable / high demand errors
+                if category == "service unavailable" and attempt < max_retries:
+                    logger.info(
+                        f"Retrying Gemini request after temporary service unavailability (retry {attempt + 1} of {max_retries})..."
+                    )
+                    time.sleep(retry_delay)
+                    continue
+
+                # Return clean, user-facing messages — never expose raw API internals
+                user_messages = {
+                    "quota/rate limit": (
+                        "Gemini is temporarily unavailable because the API quota has been exceeded. "
+                        "Please try again later."
+                    ),
+                    "invalid API key": (
+                        "The configured Gemini API key is invalid. "
+                        "Please check the GEMINI_API_KEY in backend/.env."
+                    ),
+                    "service unavailable": (
+                        "Gemini is temporarily unavailable due to high demand. "
+                        "Please try again shortly."
+                    ),
+                    "model not available": (
+                        "The configured Gemini model is currently unavailable. "
+                        "Please contact the administrator."
+                    ),
+                    "request/content format error": (
+                        "There was an issue processing your request. "
+                        "Please try rephrasing your question."
+                    ),
+                    "incorrect Gemini SDK usage": (
+                        "An internal configuration error occurred. "
+                        "Please contact the administrator."
+                    ),
+                }
+                user_msg = user_messages.get(
+                    category,
+                    "Unable to generate a response from Gemini. Please try again later."
+                )
+                return "", False, user_msg
 
     def answer_question(self, question: str, top_k: int = TOP_K, session_id: Optional[str] = None) -> QueryResponse:
         """
@@ -214,6 +313,7 @@ Please provide a well-structured, natural answer based ONLY on the excerpts abov
                 api_key_configured=True,
                 error_message=None,
                 sources=[],
+                confidence_score=0.0,
                 conversation_history=current_history
             )
 
@@ -225,16 +325,28 @@ Please provide a well-structured, natural answer based ONLY on the excerpts abov
                 api_key_configured=True,
                 error_message=None,
                 sources=[],
+                confidence_score=0.0,
                 conversation_history=current_history
             )
 
-        # 1. Embed query
-        query_vec = self.embedding_service.embed_query(question_clean)
+        # 1. Embed query with semantic query variations for enhanced recall across synonyms
+        query_variations = self._generate_query_variations(question_clean)
 
-        # 2. Retrieve top-k chunks from FAISS
-        retrieved_items = self.vector_store.search(query_vec, top_k=top_k)
+        # 2. Retrieve top-k chunks from FAISS, aggregating by max similarity score per chunk across query variations
+        chunk_scores: dict = {}
+        for q_var in query_variations:
+            q_vec = self.embedding_service.embed_query(q_var)
+            items = self.vector_store.search(q_vec, top_k=top_k)
+            for chunk, score in items:
+                if chunk.chunk_id not in chunk_scores or score > chunk_scores[chunk.chunk_id][1]:
+                    chunk_scores[chunk.chunk_id] = (chunk, score)
+
+        retrieved_items = sorted(chunk_scores.values(), key=lambda x: x[1], reverse=True)[:top_k]
+
 
         max_similarity = max([score for _, score in retrieved_items]) if retrieved_items else 0.0
+        # Determine normalized confidence score (0.0 to 1.0) representing evidence quality
+        confidence_score = calculate_confidence_score(retrieved_items)
 
         # Format sources list
         sources: List[EvidenceItem] = []
@@ -275,6 +387,7 @@ Please provide a well-structured, natural answer based ONLY on the excerpts abov
                 api_key_configured=True,
                 error_message=None,
                 sources=sources,
+                confidence_score=0.0,
                 conversation_history=current_history
             )
 
@@ -288,7 +401,7 @@ Please provide a well-structured, natural answer based ONLY on the excerpts abov
                 api_key_configured=False,
                 error_message=(
                     "Gemini API key is not configured. Please add GEMINI_API_KEY to backend/.env "
-                    "to generate the context-aware answer with Gemini 3.5 Flash."
+                    "to generate the context-aware answer with Gemini 3.5 Flash-Lite."
                 ),
                 sources=sources,
                 conversation_history=current_history
@@ -314,6 +427,7 @@ Please provide a well-structured, natural answer based ONLY on the excerpts abov
             api_key_configured=True,
             error_message=error_message,
             sources=sources,
+            confidence_score=confidence_score,
             conversation_history=CHAT_HISTORY.get(session_id, []) if session_id else None
         )
 

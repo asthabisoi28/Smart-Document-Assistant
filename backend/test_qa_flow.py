@@ -110,7 +110,7 @@ def run_qa_tests():
     print(f"Question: {q1}")
     print(f"API Key Configured: {res1.api_key_configured}")
     print(f"Is Answerable: {res1.is_answerable}")
-    print(f"Evidence Level: {res1.confidence.level} (Score: {res1.confidence.score}%, Peak Sim: {res1.confidence.max_similarity})")
+    print(f"Confidence Score: {res1.confidence_score * 100:.1f}%")
     print(f"Sources Found: {len(res1.sources)}")
     for s in res1.sources[:2]:
         loc = f"Page {s.page_number}" if s.page_number else s.line_range
@@ -135,7 +135,7 @@ def run_qa_tests():
     print(f"Question: {q2}")
     print(f"Is Answerable: {res2.is_answerable}")
     print(f"Answer: {res2.answer}")
-    print(f"Evidence Level: {res2.confidence.level} (Peak Sim: {res2.confidence.max_similarity})")
+    print(f"Confidence Score: {res2.confidence_score * 100:.1f}%")
     
     assert res2.is_answerable is False, "Unsupported questions must have is_answerable=False"
     assert "couldn't find information" in res2.answer.lower() or "not found" in res2.answer.lower()
@@ -150,8 +150,7 @@ def run_qa_tests():
     res3 = rag.answer_question(q3)
     
     print(f"Question: {q3}")
-    print(f"Evidence Level: {res3.confidence.level}")
-    print(f"Supporting Documents: {res3.confidence.supporting_documents}")
+    print(f"Confidence Score: {res3.confidence_score * 100:.1f}%")
     print(f"Sources Found: {len(res3.sources)}")
     
     # Must retrieve from both documents
@@ -175,7 +174,7 @@ def run_qa_tests():
     mock_context = "[Source 1: CS101_Syllabus.pdf (Page 2)]\nAssignment 1 Deadline: October 15 at 11:59 PM."
     # If a real key is present, test actual generation
     if api_key:
-        ans, is_ans = rag._call_gemini_llm("When is Assignment 1 due?", mock_context, api_key)
+        ans, is_ans, err = rag._call_gemini_llm("When is Assignment 1 due?", mock_context, api_key)
         print(f"Live Gemini Generation Succeeded:\n{ans}")
         assert "October 15" in ans
     else:

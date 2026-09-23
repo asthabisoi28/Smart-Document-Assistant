@@ -4,7 +4,8 @@ from pathlib import Path
 backend_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(backend_dir))
 
-from app.rag_service import classify_gemini_error
+from unittest.mock import patch, MagicMock
+from app.rag_service import classify_gemini_error, RAGService
 
 def test_classify_gemini_error():
     print("==================================================")
@@ -39,5 +40,89 @@ def test_classify_gemini_error():
     print("ALL ERROR CLASSIFICATION TESTS PASSED SUCCESSFULLY!")
     print("==================================================")
 
+def test_gemini_503_retry_behavior():
+    print("==================================================")
+    print("Testing Gemini 503 Retry Logic (Offline)")
+    print("==================================================")
+
+    rag = RAGService(vector_store=MagicMock(), embedding_service=MagicMock())
+
+    # Case 1: 503 error on all attempts (1 initial + 2 retries = 3 attempts total)
+    with patch("time.sleep", return_value=None) as mock_sleep, \
+         patch("google.genai.Client") as mock_client_cls:
+        
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.generate_content.side_effect = Exception("503 UNAVAILABLE: High demand spike")
+
+        answer, is_ans, err_msg = rag._call_gemini_llm("test question", "test context", "test-api-key")
+
+        assert is_ans is False, "Expected is_answerable=False when all retries fail"
+        assert mock_client.models.generate_content.call_count == 3, f"Expected exactly 3 calls (1 initial + 2 retries), got {mock_client.models.generate_content.call_count}"
+        assert mock_sleep.call_count == 2, f"Expected 2 sleep delays between retries, got {mock_sleep.call_count}"
+        assert "Gemini is temporarily unavailable due to high demand" in err_msg, f"Unexpected error message: {err_msg}"
+        print("[OK] Case 1 passed: 503 retried exactly 2 times (3 total attempts), returns friendly 503 message on final failure.")
+
+    # Case 2: 503 on first attempt, succeeds on 2nd attempt (1 retry)
+    with patch("time.sleep", return_value=None) as mock_sleep, \
+         patch("google.genai.Client") as mock_client_cls:
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        
+        success_response = MagicMock()
+        success_response.text = "This is a synthesized answer from the second attempt."
+        mock_client.models.generate_content.side_effect = [
+            Exception("503 UNAVAILABLE: High demand spike"),
+            success_response
+        ]
+
+        answer, is_ans, err_msg = rag._call_gemini_llm("test question", "test context", "test-api-key")
+
+        assert is_ans is True
+        assert answer == "This is a synthesized answer from the second attempt."
+        assert err_msg is None
+        assert mock_client.models.generate_content.call_count == 2, f"Expected 2 calls, got {mock_client.models.generate_content.call_count}"
+        assert mock_sleep.call_count == 1, f"Expected 1 sleep delay, got {mock_sleep.call_count}"
+        print("[OK] Case 2 passed: 503 succeeded on retry, returned synthesized answer.")
+
+    # Case 3: Permanent error (404 Model Not Found) -> must NOT retry (only 1 attempt)
+    with patch("time.sleep", return_value=None) as mock_sleep, \
+         patch("google.genai.Client") as mock_client_cls:
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.generate_content.side_effect = Exception("404 Model not found")
+
+        answer, is_ans, err_msg = rag._call_gemini_llm("test question", "test context", "test-api-key")
+
+        assert is_ans is False
+        assert mock_client.models.generate_content.call_count == 1, f"Expected only 1 call for 404, got {mock_client.models.generate_content.call_count}"
+        assert mock_sleep.call_count == 0, "Sleep should not be called for non-retryable errors"
+        assert "model is currently unavailable" in err_msg
+        print("[OK] Case 3 passed: 404 permanent error was NOT retried (only 1 attempt).")
+
+    # Case 4: Permanent error (401 Invalid Key) -> must NOT retry (only 1 attempt)
+    with patch("time.sleep", return_value=None) as mock_sleep, \
+         patch("google.genai.Client") as mock_client_cls:
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.generate_content.side_effect = Exception("401 API_KEY_INVALID")
+
+        answer, is_ans, err_msg = rag._call_gemini_llm("test question", "test context", "test-api-key")
+
+        assert is_ans is False
+        assert mock_client.models.generate_content.call_count == 1, f"Expected only 1 call for 401, got {mock_client.models.generate_content.call_count}"
+        assert mock_sleep.call_count == 0
+        assert "API key is invalid" in err_msg
+        print("[OK] Case 4 passed: 401 invalid API key error was NOT retried (only 1 attempt).")
+
+    print("==================================================")
+    print("ALL RETRY LOGIC TESTS PASSED SUCCESSFULLY!")
+    print("==================================================")
+
 if __name__ == "__main__":
     test_classify_gemini_error()
+    test_gemini_503_retry_behavior()
+
