@@ -1,0 +1,5 @@
+Capstone Project Guidelines
+Students must form teams of 2 to 4 members.
+Each team must submit a project proposal by October 20.
+The project must incorporate a vector database such as FAISS and a generative model.
+All submissions must include a GitHub repository link and a 5-minute video presentation.
