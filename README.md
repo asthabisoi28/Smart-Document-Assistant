@@ -1,6 +1,6 @@
 # Smart Document Assistant
 
-An intelligent, grounded Document Question & Answering (RAG) assistant designed to ingest multi-page PDF and TXT documents, extract content with precise page and section tracking, index text using dense vector embeddings, and deliver factual answers powered by **Gemini 3.5 Flash**—complete with an **Answer Confidence / Evidence Indicator**.
+An intelligent, grounded Document Question & Answering (RAG) assistant designed to ingest multi-page PDF and TXT documents, extract content with precise page and section tracking, index text using dense vector embeddings, and deliver factual answers powered by **Gemini 3.5 Flash-Lite**—complete with an **Answer Confidence / Evidence Indicator**.
 
 ---
 
