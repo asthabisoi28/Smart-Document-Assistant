@@ -1,4 +1,17 @@
-const API_BASE = '/api';
+// Centralized API base URL configuration.
+// In production: reads VITE_API_URL env var (e.g. "https://backend.up.railway.app")
+// In development: falls back to relative "/api" which Vite's dev proxy forwards to localhost:8000
+const VITE_API_URL = import.meta.env.VITE_API_URL;
+
+if (!VITE_API_URL && import.meta.env.PROD) {
+  console.error(
+    '[Smart Document Assistant] VITE_API_URL is not set in production! ' +
+    'API calls will fail. Set VITE_API_URL in your Vercel environment variables ' +
+    'to your Railway backend URL (e.g. https://your-backend.up.railway.app).'
+  );
+}
+
+const API_BASE = VITE_API_URL ? `${VITE_API_URL.replace(/\/+$/, '')}/api` : '/api';
 
 export async function checkHealth() {
   const res = await fetch(`${API_BASE}/health`);
